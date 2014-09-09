@@ -10,10 +10,10 @@
 #   HUBOT_SUBSCRIPTIONS_PASSWORD (optional)
 #
 # Commands:
-#   hubot subscribe <event> - subscribes current room to event. To debug, subscribe to 'unsubscribed.event'
-#   hubot unsubscribe <event> - unsubscribes current room from event
-#   hubot unsubscribe all events - unsubscribes current room from all events
-#   hubot subscriptions - show subscriptions of current room
+#   hubot subscribe <event> - subscribes current room (or user if PM) to event. To debug, subscribe to 'unsubscribed.event'
+#   hubot unsubscribe <event> - unsubscribes current room (or user if PM) from event
+#   hubot unsubscribe all events - unsubscribes current room (or user if PM) from all events
+#   hubot subscriptions - show subscriptions of current room (or user if PM)
 #   hubot all subscriptions - show all existing subscriptions
 #   hubot publish <event> <data> - triggers event
 #
@@ -25,12 +25,36 @@
 #   pubsub:publish <event> <data> - publishes an event from another script
 #
 # Author:
-#   spajus
+#   spajus, michaelansel
 
 module.exports = (robot) ->
 
   url = require('url')
   querystring = require('querystring')
+
+  sendMessageToTarget = (target, message) ->
+    robot.logger.debug "Sending message to #{JSON.stringify target}: #{message}"
+    if typeof target is 'string'
+      # deprecated
+      envelope = {}
+      envelope.room = target
+    else
+      envelope = {user: target}
+      envelope.room = envelope.user.room
+    robot.send envelope, message
+
+  printableTarget = (target) ->
+    if typeof target is 'string'
+      # deprecated
+      return '#' + (target.replace /@.*$/,'')
+    else if target.room?
+      return '#' + (target.room.replace /^#/,'')
+    else
+      return '@' + target.name
+
+  targetFromMessage = (msg) ->
+    target = msg.message.user
+    return target
 
   subscriptions = (ev, partial = false) ->
     subs = robot.brain.data.subscriptions ||= {}
@@ -54,17 +78,13 @@ module.exports = (robot) ->
     count = 0
     subs = subscriptions(event, true)
     if event && subs
-      for room in subs
+      for target in subs
         count += 1
-        user = {}
-        user.room = room
-        robot.send user, "#{event}: #{data}"
+        sendMessageToTarget target, "#{event}: #{data}"
     unless count > 0
       console.log "hubot-pubsub: unsubscribed.event: #{event}: #{data}"
-      for room in subscriptions('unsubscribed.event')
-        user = {}
-        user.room = room
-        robot.send user, "unsubscribed.event: #{event}: #{data}"
+      for target in subscriptions('unsubscribed.event')
+        sendMessageToTarget target, "unsubscribed.event: #{event}: #{data}"
     count
 
   persist = (subscriptions) ->
@@ -73,54 +93,72 @@ module.exports = (robot) ->
 
   robot.respond /subscribe ([a-z0-9\-\.\:]+)$/i, (msg) ->
     ev = msg.match[1]
-    subscriptions(ev).push msg.message.user.room
+    target = targetFromMessage msg
+    subscriptions(ev).push target
     persist subscriptions()
-    msg.send "Subscribed #{msg.message.user.room} to #{ev} events"
+    msg.send "Subscribed #{printableTarget target} to #{ev} events"
 
   robot.respond /unsubscribe ([a-z0-9\-\.\:]+)$/i, (msg) ->
     ev = msg.match[1]
     subs = subscriptions()
     subs[ev] ||= []
-    if msg.message.user.room in subs[ev]
-      index = subs[ev].indexOf msg.message.user.room
+    target = targetFromMessage msg
+    if target in subs[ev] or
+       # deprecated
+       (target.room? and target.room in subs[ev])
+      if target in subs[ev]
+        index = subs[ev].indexOf target
+      else
+        # deprecated
+        index = subs[ev].indexOf target.room
       subs[ev].splice(index, 1)
       persist subs
-      msg.send "Unsubscribed #{msg.message.user.room} from #{ev} events"
+      msg.send "Unsubscribed #{printableTarget target} from #{ev} events"
     else
-      msg.send "#{msg.message.user.room} was not subscribed to #{ev} events"
+      msg.send "#{printableTarget target} was not subscribed to #{ev} events"
 
   robot.respond /unsubscribe all events$/i, (msg) ->
     count = 0
     subs = subscriptions()
+    target = targetFromMessage msg
     for ev of subs
-      if msg.message.user.room in subs[ev]
-        index = subs[ev].indexOf msg.message.user.room
+      if target in subs[ev] or
+         # deprecated
+         (target.room? and target.room in subs[ev])
+        if target in subs[ev]
+          index = subs[ev].indexOf target
+        else
+          # deprecated
+          index = subs[ev].indexOf target.room
         subs[ev].splice(index, 1)
         count += 1
     persist subs
-    msg.send "Unsubscribed #{msg.message.user.room} from #{count} events"
+    msg.send "Unsubscribed #{printableTarget target} from #{count} events"
 
   robot.respond /subscriptions$/i, (msg) ->
     count = 0
+    target = targetFromMessage msg
     for ev of subscriptions()
-      if msg.message.user.room in subscriptions(ev)
+      if target in subscriptions(ev) or
+         # deprecated
+         (target.room? and target.room in subscriptions(ev))
         count += 1
-        msg.send "#{ev} -> #{msg.message.user.room}"
-    msg.send "Total subscriptions for #{msg.message.user.room}: #{count}"
+        msg.send "#{ev} -> #{printableTarget target}"
+    msg.send "Total subscriptions for #{printableTarget target}: #{count}"
 
   robot.respond /all subscriptions$/i, (msg) ->
     count = 0
     for ev of subscriptions()
-      for room in subscriptions(ev)
+      for target in subscriptions(ev)
         count += 1
-        msg.send "#{ev} -> #{room}"
+        msg.send "#{ev} -> #{printableTarget target}"
     msg.send "Total subscriptions: #{count}"
 
   robot.respond /publish ([a-z0-9\-\.\:]+) (.*)$/i, (msg) ->
     ev = msg.match[1]
     data = msg.match[2]
     count = notify(ev, data)
-    msg.send "Notified #{count} rooms about #{ev}"
+    msg.send "Notified #{count} targets about #{ev}"
 
   robot.router.get "/publish", (req, res) ->
     query = querystring.parse(url.parse(req.url).query)

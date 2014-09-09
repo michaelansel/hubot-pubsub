@@ -7,9 +7,13 @@ describe 'pubsub', ->
   robot = null
   adapter = null
   user = null
+  userDirect = null
 
   say = (msg) ->
     adapter.receive new messages.TextMessage(user, msg)
+
+  sayDirect = (msg) ->
+    adapter.receive new messages.TextMessage(userDirect, msg)
 
   expectHubotToSay = (msg, done) ->
     adapter.on 'send', (envelope, strings) ->
@@ -29,12 +33,10 @@ describe 'pubsub', ->
       robot = new Robot(null, 'mock-adapter', false, 'Hubot')
 
       robot.adapter.on 'connected', ->
-        process.env.HUBOT_AUTH_ADMIN = '1'
-        robot.loadFile (path.resolve path.join 'node_modules/hubot/src/scripts'), 'auth.coffee'
-
         (require '../src/pubsub')(robot)
 
         user = robot.brain.userForId('1', name: 'jasmine', room: '#jasmine')
+        userDirect = robot.brain.userForId('2', name: 'jasmineDirect')
         adapter = robot.adapter
         ready = true
 
@@ -71,16 +73,45 @@ describe 'pubsub', ->
 
     say 'hubot subscriptions'
 
+  it 'lists current user subscriptions', (done) ->
+    robot.brain.data.subscriptions =
+      'foo.bar': [ robot.brain.userForId('2'), {room: '#other'} ]
+      'baz': [ {room: '#foo'}, robot.brain.userForId('2') ]
+
+    count = 0
+    captured = []
+
+    doneLatch = ->
+      count += 1
+      if count == 3
+        (expect 'foo.bar -> @jasmineDirect' in captured).toBeTruthy()
+        (expect 'baz -> @jasmineDirect' in captured).toBeTruthy()
+        (expect 'Total subscriptions for @jasmineDirect: 2' in captured).toBeTruthy()
+        done()
+
+    captureHubotOutput captured, doneLatch
+    captureHubotOutput captured, doneLatch
+    captureHubotOutput captured, doneLatch
+
+    sayDirect 'hubot subscriptions'
+
   it 'lists all subscriptions', (done) ->
     expectHubotToSay 'Total subscriptions: 0', done
     say 'hubot all subscriptions'
 
   it 'subscribes a room', (done) ->
     expectHubotToSay 'Subscribed #jasmine to foo.bar events', ->
-      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ '#jasmine' ]
+      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ robot.brain.userForId('1') ]
       done()
 
     say 'hubot subscribe foo.bar'
+
+  it 'subscribes a user', (done) ->
+    expectHubotToSay 'Subscribed @jasmineDirect to foo.bar events', ->
+      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ robot.brain.userForId('2') ]
+      done()
+
+    sayDirect 'hubot subscribe foo.bar'
 
   it 'cannot unsubscribe a room which was not subscribed', (done) ->
     expectHubotToSay '#jasmine was not subscribed to foo.bar events', done
@@ -95,6 +126,15 @@ describe 'pubsub', ->
 
     say 'hubot unsubscribe foo.bar'
 
+  it 'unsubscribes a user', (done) ->
+    robot.brain.data.subscriptions = 'foo.bar': [ robot.brain.userForId('2') ]
+
+    expectHubotToSay 'Unsubscribed @jasmineDirect from foo.bar events', ->
+      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ ]
+      done()
+
+    sayDirect 'hubot unsubscribe foo.bar'
+
   it 'allows subscribing all unsubscribed events for debugging', (done) ->
     robot.brain.data.subscriptions = 'unsubscribed.event': [ '#jasmine' ]
 
@@ -105,7 +145,7 @@ describe 'pubsub', ->
       count += 1
       if count == 2
         (expect 'unsubscribed.event: unrouted: no one should receive it' in captured).toBeTruthy()
-        (expect 'Notified 0 rooms about unrouted' in captured).toBeTruthy()
+        (expect 'Notified 0 targets about unrouted' in captured).toBeTruthy()
         done()
 
     captureHubotOutput captured, doneLatch

@@ -54,7 +54,11 @@ module.exports = (robot) ->
 
   targetFromMessage = (msg) ->
     target = msg.message.user
-    return target
+    # Strip user information if this is a room
+    if target.room?
+      return {room: target.room}
+    else
+      return target
 
   subscriptions = (ev, partial = false) ->
     subs = robot.brain.data.subscriptions ||= {}

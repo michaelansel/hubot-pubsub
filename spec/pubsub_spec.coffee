@@ -51,10 +51,32 @@ describe 'pubsub', ->
     expectHubotToSay 'Total subscriptions for #jasmine: 0', done
     say 'hubot subscriptions'
 
-  it 'lists current room subscriptions', (done) ->
+  it 'lists current room subscriptions (old style)', (done) ->
     robot.brain.data.subscriptions =
       'foo.bar': [ '#jasmine', '#other' ]
       'baz': [ '#foo', '#jasmine' ]
+
+    count = 0
+    captured = []
+
+    doneLatch = ->
+      count += 1
+      if count == 3
+        (expect 'foo.bar -> #jasmine' in captured).toBeTruthy()
+        (expect 'baz -> #jasmine' in captured).toBeTruthy()
+        (expect 'Total subscriptions for #jasmine: 2' in captured).toBeTruthy()
+        done()
+
+    captureHubotOutput captured, doneLatch
+    captureHubotOutput captured, doneLatch
+    captureHubotOutput captured, doneLatch
+
+    say 'hubot subscriptions'
+
+  it 'lists current room subscriptions (new style)', (done) ->
+    robot.brain.data.subscriptions =
+      'foo.bar': [ {room:'#jasmine'}, {room:'#other'} ]
+      'baz': [ {room:'#foo'}, {room:'#jasmine'} ]
 
     count = 0
     captured = []
@@ -101,7 +123,7 @@ describe 'pubsub', ->
 
   it 'subscribes a room', (done) ->
     expectHubotToSay 'Subscribed #jasmine to foo.bar events', ->
-      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ robot.brain.userForId('1') ]
+      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ { room: '#jasmine' } ]
       done()
 
     say 'hubot subscribe foo.bar'
@@ -117,8 +139,17 @@ describe 'pubsub', ->
     expectHubotToSay '#jasmine was not subscribed to foo.bar events', done
     say 'hubot unsubscribe foo.bar'
 
-  it 'unsubscribes a room', (done) ->
+  it 'unsubscribes a room (old style)', (done) ->
     robot.brain.data.subscriptions = 'foo.bar': [ '#jasmine' ]
+
+    expectHubotToSay 'Unsubscribed #jasmine from foo.bar events', ->
+      (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ ]
+      done()
+
+    say 'hubot unsubscribe foo.bar'
+
+  it 'unsubscribes a room (new style)', (done) ->
+    robot.brain.data.subscriptions = 'foo.bar': [ {room: '#jasmine'} ]
 
     expectHubotToSay 'Unsubscribed #jasmine from foo.bar events', ->
       (expect robot.brain.data.subscriptions['foo.bar']).toEqual [ ]
